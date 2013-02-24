@@ -1,9 +1,22 @@
 #!/usr/bin/python
 # -*- coding: utf8 -*-
 
+'''
+title           : 	blink_train_times.py
+description     : 	Poll trafiklab.se real-time traffic information and display train 
+							departure times using a blink(1) device
+							Let t be time until next train departure in minutes, then:
+							15 < t:	 		red
+							12 < t < 15:	green
+							10 < t < 12:	yellow
+							8 < t < 10:		blink yellow
+							0 < t < 8:		red
+author          : 	Marcus Mikulcak
+'''
+
 import time, sys
 import urllib
-from xml.dom.minidom import parse, parseString
+from xml.dom.minidom import parse
 import threading
 import argparse
 
@@ -23,24 +36,12 @@ class blink_thread(threading.Thread):
 	cancel = False
 	currently_blinking = False
 
-	blink_repetitions = 0
-
-	current_blink_delay = 0
-
 	blink_device = None
-
-	def get_color_string(self, color):
-		color_string = ""
-		for single_color in color:
-			color_string = color_string + ", " + str(single_color)
-		return color_string
 	
-	def __init__(self, color=[255,0,0]):
+	def __init__(self, color=[255,255,255]):
 		self.cancel = False
 		self.currently_blinking = False
-		self.current_blink_delay = 250
 		self.current_color = color
-		self.blink_repetitions = 1
 
 		# find the blink(1) device
 		self.blink_device = usb.core.find(idVendor=0x27b8, idProduct=0x01ed)
@@ -54,30 +55,54 @@ class blink_thread(threading.Thread):
 	def set_new_color(self, new_color):
 		self.current_color = new_color
 
-	def blink(self, time, repetitions):
+	def blink(self):
 		self.currently_blinking = True
-		self.current_blink_delay = time
-		self.blink_repetitions = repetitions
 
 	def stop_blinking(self):
 		self.currently_blinking = False
 
 	def run(self):
 		# fade to self.current_color every second
+		# and stop when the thread has been asked to do so
+
+		# create the usb request
+		bmRequestTypeOut = usb.util.build_request_type(usb.util.CTRL_OUT, usb.util.CTRL_TYPE_CLASS, usb.util.CTRL_RECIPIENT_INTERFACE)
+		# fade to color with timing set below: 0x63 
+		action = 0x63
+
 		while True and not self.cancel:
-			# build the USB command
-			bmRequestTypeOut = usb.util.build_request_type(usb.util.CTRL_OUT, usb.util.CTRL_TYPE_CLASS, usb.util.CTRL_RECIPIENT_INTERFACE)
-			# fade to color with timing set below: 0x63 
-			action = 0x63
-			red = self.current_color[0]
-			green = self.current_color[1]
-			blue = self.current_color[2]
-			# a device timing tick is 10ms long, so 50 ticks will lead to a 500ms fade
-			ticks = 50
-			th = (ticks & 0xff00) >> 8
-			tl = ticks & 0x00ff
-			self.blink_device.ctrl_transfer(bmRequestTypeOut, 0x09, (3 << 8) | 0x01, 0, [0x00, action, red, green, blue, th, tl, 0x00, 0x00])
-			time.sleep(1)
+			if self.currently_blinking == False:
+				# if blinking is currently turned off, simply fade to color
+				# build the USB command content
+				red = self.current_color[0]
+				green = self.current_color[1]
+				blue = self.current_color[2]
+				# a device timing tick is 10ms long, so 50 ticks will lead to a 500ms fade
+				ticks = 90
+				th = (ticks & 0xff00) >> 8
+				tl = ticks & 0x00ff
+				self.blink_device.ctrl_transfer(bmRequestTypeOut, 0x09, (3 << 8) | 0x01, 0, [0x00, action, red, green, blue, th, tl, 0x00, 0x00])
+				# check for new color and send new command in one second
+				time.sleep(1)
+			else:
+				# if blinking is currently turned on, things go crazy
+				# build the USB command content
+				# first fade to black (off)
+				ticks = 40
+				th = (ticks & 0xff00) >> 8
+				tl = ticks & 0x00ff
+				red = 0
+				green = 0
+				blue = 0
+				self.blink_device.ctrl_transfer(bmRequestTypeOut, 0x09, (3 << 8) | 0x01, 0, [0x00, action, red, green, blue, th, tl, 0x00, 0x00])
+				time.sleep(0.5)
+				# now fade back to the currently set color
+				red = self.current_color[0]
+				green = self.current_color[1]
+				blue = self.current_color[2]
+				self.blink_device.ctrl_transfer(bmRequestTypeOut, 0x09, (3 << 8) | 0x01, 0, [0x00, action, red, green, blue, th, tl, 0x00, 0x00])
+				time.sleep(0.50)
+
 
 class blink_controller():
 
@@ -86,8 +111,8 @@ class blink_controller():
 	def set_new_color(self, new_color):
 		self.spawned_blink_thread.set_new_color(new_color)
 
-	def blink(self, time=500, repetitions=1):
-		self.spawned_blink_thread.blink(time, repetitions)
+	def start_blinking(self):
+		self.spawned_blink_thread.blink()
 
 	def stop_blinking(self):
 		self.spawned_blink_thread.stop_blinking()
@@ -102,6 +127,9 @@ class blink_controller():
 		self.spawned_blink_thread.stop_thread()
 
 
+# this returns the first train departure into the correct direction as minidom object
+# TODO: get complete list of departures and handle them a bit smarter
+# e.g. if departures are close together, skip the next one and set light according to departure after that
 def find_correct_departure(dom):
 	for train in dom.getElementsByTagName('Trains'):
 		for train_departure in train.getElementsByTagName('DpsTrain'):
@@ -109,6 +137,7 @@ def find_correct_departure(dom):
 				if direction.firstChild.data == '2':
 					return train_departure
 
+# this calls the find_correct_departure() method and returns its return value as a time string
 def find_next_departure(dom):
 	departure = find_correct_departure(dom)
 	if departure == None:
@@ -118,6 +147,8 @@ def find_next_departure(dom):
 	else:
 		return departure.getElementsByTagName('ExpectedDateTime')[0].firstChild.data
 
+
+# this calls find_next_departure(), compares its return value to the current time and sets the blink color accordingly
 def get_information_and_update_blink(blink_instance, dom):
 	next_departure = time.strptime(find_next_departure(dom), "%Y-%m-%dT%H:%M:%S")
 	dt = datetime.fromtimestamp(time.mktime(next_departure))
@@ -126,18 +157,26 @@ def get_information_and_update_blink(blink_instance, dom):
 
 	time_difference = dt - time_now
 
+	# turn off device blinking
+	blink_instance.stop_blinking()
+
 	print str(time_difference.seconds) + " seconds until the next train leaves to the city, set to",
-	if time_difference.seconds > 1200:
-		# the next train comes in more than 20 minutes, turn to red
+	if time_difference.seconds > 900:
+		# the next train comes in more than 15 minutes, turn to red
 		print "red..."
 		blink_instance.set_new_color([255, 0, 0])
 	elif time_difference.seconds > 720:
 		# train comes in more than 12 minutes, turn to green
 		print "green..."
 		blink_instance.set_new_color([0, 255, 0])
-	elif time_difference.seconds > 480:
-		# train comes in less than 12 but more than 8 minutes, turn to yellow
+	elif time_difference.seconds > 600:
+		# train comes in less than 12 but more than 10 minutes, turn to yellow
 		print "yellow..."
+		blink_instance.set_new_color([255, 255, 0])
+	elif time_difference.seconds > 480:
+		# train comes in less than 10 but more than 8 minutes, turn to yellow and start blinking
+		print "yellow and blink..."
+		blink_instance.start_blinking()
 		blink_instance.set_new_color([255, 255, 0])
 	else:
 		# the next train leaves in less than 8 minutes, turn to red
@@ -176,8 +215,8 @@ def main():
 								required=False)
 
 	args = parser.parse_args()
-	# print args.api_key
-	# print args.station_id
+
+	print "Using API key " + args.api_key
 
 	train_blink_controller.spawn_blink_thread()
 
