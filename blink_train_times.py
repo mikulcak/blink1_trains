@@ -1,17 +1,23 @@
 #!/usr/bin/python
 # -*- coding: utf8 -*-
 
-import subprocess, time, sys
+import time, sys
 import urllib
 from xml.dom.minidom import parse, parseString
 import threading
+import argparse
 
 import signal
 from datetime import datetime
 
-blink_commandline = "./blink1-tool_linux"
+try:
+	import usb
+except ImportError:
+	print "PyUSB is needed"
+	sys.exit()
 
 class blink_thread(threading.Thread):
+	
 	current_color = [0, 0, 0]
 
 	cancel = False
@@ -20,6 +26,8 @@ class blink_thread(threading.Thread):
 	blink_repetitions = 0
 
 	current_blink_delay = 0
+
+	blink_device = None
 
 	def get_color_string(self, color):
 		color_string = ""
@@ -33,6 +41,11 @@ class blink_thread(threading.Thread):
 		self.current_blink_delay = 250
 		self.current_color = color
 		self.blink_repetitions = 1
+
+		# find the blink(1) device
+		self.blink_device = usb.core.find(idVendor=0x27b8, idProduct=0x01ed)
+		assert self.blink_device is not None, "No blink(1) device found..."
+
 		threading.Thread.__init__(self)
 
 	def stop_thread(self):
@@ -50,12 +63,21 @@ class blink_thread(threading.Thread):
 		self.currently_blinking = False
 
 	def run(self):
+		# fade to self.current_color every second
 		while True and not self.cancel:
+			# build the USB command
+			bmRequestTypeOut = usb.util.build_request_type(usb.util.CTRL_OUT, usb.util.CTRL_TYPE_CLASS, usb.util.CTRL_RECIPIENT_INTERFACE)
+			# fade to color with timing set below: 0x63 
+			action = 0x63
+			red = self.current_color[0]
+			green = self.current_color[1]
+			blue = self.current_color[2]
+			# a device timing tick is 10ms long, so 50 ticks will lead to a 500ms fade
+			ticks = 50
+			th = (ticks & 0xff00) >> 8
+			tl = ticks & 0x00ff
+			self.blink_device.ctrl_transfer(bmRequestTypeOut, 0x09, (3 << 8) | 0x01, 0, [0x00, action, red, green, blue, th, tl, 0x00, 0x00])
 			time.sleep(1)
-			if self.currently_blinking == True:
-				subprocess.Popen([blink_commandline, "-t", str(self.current_blink_delay), "--quiet", "--rgb", self.get_color_string(self.current_color), "--blink", str(self.blink_repetitions)])				
-			else:
-				subprocess.Popen([blink_commandline, "--quiet", "--rgb", self.get_color_string(self.current_color)])
 
 class blink_controller():
 
@@ -91,6 +113,7 @@ def find_next_departure(dom):
 	departure = find_correct_departure(dom)
 	if departure == None:
 		# print "No matching departure found..."
+		# if no departure was found, just use a date which will cause the device to blink red
 		return "2012-12-12T12:12:12"
 	else:
 		return departure.getElementsByTagName('ExpectedDateTime')[0].firstChild.data
@@ -107,7 +130,7 @@ def get_information_and_update_blink(blink_instance, dom):
 	if time_difference.seconds > 1200:
 		# the next train comes in more than 20 minutes, turn to red
 		print "red..."
-		blink_instance.set_new_color([255, 0, 5])
+		blink_instance.set_new_color([255, 0, 0])
 	elif time_difference.seconds > 720:
 		# train comes in more than 12 minutes, turn to green
 		print "green..."
@@ -121,7 +144,7 @@ def get_information_and_update_blink(blink_instance, dom):
 		print "red..."
 		blink_instance.set_new_color([255, 0, 0])
 
-
+# has to be global to be visible to the signal handler function
 train_blink_controller = blink_controller([255, 0,0])
 
 def handler(signum, frame):
@@ -139,8 +162,26 @@ def get_traffic_information(schedule_url):
 
 
 def main():
+	parser = argparse.ArgumentParser(description='Receive train departure information from trafiklab.se and show them via a blink(1) device.')
+	parser.add_argument('--api_key', 
+								action='store', 
+								default="", 
+								help='The API key from trafiklab.se',
+								required=True)
+
+	parser.add_argument('--station_id', 
+								action='store', 
+								default="9526", # Flemingsberg, commuter trains
+								help='The station ID to be checked',
+								required=False)
+
+	args = parser.parse_args()
+	# print args.api_key
+	# print args.station_id
+
 	train_blink_controller.spawn_blink_thread()
-	schedule_url = "https://api.trafiklab.se/sl/realtid/GetDpsDepartures?key=5f603a5e63e3ac2dd5fb7f6f922ab607&siteid=9526"
+
+	schedule_url = "https://api.trafiklab.se/sl/realtid/GetDpsDepartures?key=" + str(args.api_key) + "&siteid=" + str(args.station_id)
 
 	current_information = None
 	saved_information = None
