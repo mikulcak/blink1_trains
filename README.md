@@ -1,7 +1,7 @@
 blink1_trains
 =============
 
-Color-coded train departure notification
+Color-coded train departure notification using a blink(1) from http://thingm.com/products/blink-1.html
 
 usage: blink_train_times.py [-h] --api_key API_KEY [--station_id STATION_ID]
 

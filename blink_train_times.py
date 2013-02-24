@@ -65,7 +65,7 @@ class blink_thread(threading.Thread):
 		# fade to self.current_color every second
 		# and stop when the thread has been asked to do so
 
-		# create the usb request
+		# create the usb request (based on code in https://github.com/todbot/blink1/blob/master/python/blink1hid-demo.py)
 		bmRequestTypeOut = usb.util.build_request_type(usb.util.CTRL_OUT, usb.util.CTRL_TYPE_CLASS, usb.util.CTRL_RECIPIENT_INTERFACE)
 		# fade to color with timing set below: 0x63 
 		action = 0x63
