@@ -195,7 +195,7 @@ def get_traffic_information(schedule_url):
 	try:
 		current_information = urllib.urlopen(schedule_url)
 		return current_information
-	except urllib.error.URLError:
+	except IOError:
 		print "An error occured while trying to fetch the new traffic information data, using old data..."
 		return None
 
@@ -235,6 +235,7 @@ def main():
 		else:
 			if saved_information == None:
 				print "An error occured while trying to get the traffic information and no stored information was found..."
+				train_blink_controller.goodbye()
 				sys.exit()
 			dom = parse(saved_information)
 		get_information_and_update_blink(train_blink_controller, dom)
