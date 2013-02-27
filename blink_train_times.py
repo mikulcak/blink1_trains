@@ -230,7 +230,12 @@ def main():
 	while True:
 		current_information = get_traffic_information(schedule_url)
 		if current_information != None:
-			dom = parse(current_information)
+			try:
+				dom = parse(current_information)
+			except:
+				print "An error occured parsing the information, trying again in ten seconds..."
+				time.sleep(10)
+				continue
 			saved_information = current_information
 		else:
 			if saved_information == None:
