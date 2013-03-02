@@ -239,10 +239,9 @@ def main():
 			saved_information = current_information
 		else:
 			if saved_information == None:
-				print "An error occured while trying to get the traffic information and no stored information was found..."
-				train_blink_controller.goodbye()
-				sys.exit()
-			dom = parse(saved_information)
+				print "An error occured while trying to get the traffic information and no stored information was found, trying again in ten seconds..."
+				time.sleep(10)
+				continue
 		get_information_and_update_blink(train_blink_controller, dom)
 		time.sleep(10)
 
