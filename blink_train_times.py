@@ -127,53 +127,77 @@ class blink_controller():
 		self.spawned_blink_thread.stop_thread()
 
 
-# this returns the first train departure into the correct direction as minidom object
-# TODO: get complete list of departures and handle them a bit smarter
-# e.g. if departures are close together, skip the next one and set light according to departure after that
+# this returns the list of departure time strings
 def find_correct_departure(dom):
+
+	# find all departures of line 36 to Märsta
+	list_of_departures_times = []
+
 	for train in dom.getElementsByTagName('Trains'):
 		for train_departure in train.getElementsByTagName('DpsTrain'):
-			for direction in train_departure.getElementsByTagName('JourneyDirection'):
-				if direction.firstChild.data == '2':
-					return train_departure
+			# check if the current departure element is going into the right direction ("2" going north)
+			if train_departure.getElementsByTagName('JourneyDirection').item(0).firstChild.data != "2":
+				# if the direction of this departure is wrong, continue to next departure element
+				continue
+			else:
+				# for the correct direction, check if the line number is correct ("36" going to Märsta)
+				if train_departure.getElementsByTagName('LineNumber').item(0).firstChild.data == "36":
+					# add the departure time of this matching departure element to the list to be returned
+					list_of_departures_times.append(train_departure.getElementsByTagName('ExpectedDateTime').item(0).firstChild.data)
 
-# this calls the find_correct_departure() method and returns its return value as a time string
+	return list_of_departures_times
+
+
+# this calls the find_correct_departure() method and compares the list of results with the current time
+# if the results are too close together, e.g. if there are to trains with the next twelve minutes,
+# return the time difference to the later one
 def find_next_departure(dom):
 	departure = find_correct_departure(dom)
-	if departure == None:
-		# print "No matching departure found..."
-		# if no departure was found, just use a date which will cause the device to blink red
-		return "2012-12-12T12:12:12"
+
+	seconds_to_departure_list = []
+	for departure_time_string_entry in departure:
+		next_departure = time.strptime(departure_time_string_entry, "%Y-%m-%dT%H:%M:%S")
+		dt = datetime.fromtimestamp(time.mktime(next_departure))
+		time_now = datetime.now()
+		time_difference = dt - time_now
+		seconds_to_departure_list.append(time_difference.seconds)
+
+	closest_departure = 0
+
+	if len(seconds_to_departure_list) > 1:
+		# if the second departure is earlier than in twelve minutes, skip the next one
+		if (seconds_to_departure_list[1] - seconds_to_departure_list[0]) < 720:
+			closest_departure = seconds_to_departure_list[1]
+		else:
+			closest_departure = seconds_to_departure_list[0]
 	else:
-		return departure.getElementsByTagName('ExpectedDateTime')[0].firstChild.data
+		closest_departure = seconds_to_departure_list[0]
+
+	return closest_departure
 
 
-# this calls find_next_departure(), compares its return value to the current time and sets the blink color accordingly
+
+# this calls find_next_departure() and sets the color according to its return value
 def get_information_and_update_blink(blink_instance, dom):
-	next_departure = time.strptime(find_next_departure(dom), "%Y-%m-%dT%H:%M:%S")
-	dt = datetime.fromtimestamp(time.mktime(next_departure))
-
-	time_now = datetime.now()
-
-	time_difference = dt - time_now
+	time_difference = find_next_departure(dom)
 
 	# turn off device blinking
 	blink_instance.stop_blinking()
 
-	print str(time_difference.seconds) + " seconds until the next train leaves to the city, set to",
-	if time_difference.seconds > 900:
+	print str(time_difference) + " seconds until the next train leaves to the city, set to",
+	if time_difference > 900:
 		# the next train comes in more than 15 minutes, turn to red
 		print "red..."
 		blink_instance.set_new_color([255, 0, 0])
-	elif time_difference.seconds > 720:
+	elif time_difference > 720:
 		# train comes in more than 12 minutes, turn to green
 		print "green..."
 		blink_instance.set_new_color([0, 255, 0])
-	elif time_difference.seconds > 600:
+	elif time_difference > 600:
 		# train comes in less than 12 but more than 10 minutes, turn to yellow
 		print "yellow..."
 		blink_instance.set_new_color([255, 255, 0])
-	elif time_difference.seconds > 480:
+	elif time_difference > 480:
 		# train comes in less than 10 but more than 8 minutes, turn to yellow and start blinking
 		print "yellow and blink..."
 		blink_instance.start_blinking()
