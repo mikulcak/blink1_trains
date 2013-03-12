@@ -164,9 +164,15 @@ def find_next_departure(dom):
 
 	closest_departure = 0
 
-	if len(seconds_to_departure_list) > 1:
+	if len(seconds_to_departure_list) == 0:
+		# no time was found in the API response, so just set the color to red
+		print "API response did not contain matching departure times\n\t",
+		closest_departure = 1000
+	elif len(seconds_to_departure_list) > 1:
 		# if the second departure is earlier than in twelve minutes, skip the next one
-		if (seconds_to_departure_list[1] - seconds_to_departure_list[0]) < 720:
+		# but the second deparature als has to be earlier than in 15 minutes
+		if ((seconds_to_departure_list[1] - seconds_to_departure_list[0]) < 720) and (seconds_to_departure_list[1] < 900):
+			print "Current departure times to close together (" + str(seconds_to_departure_list[0]) + " and " + str(seconds_to_departure_list[1]) + " seconds), skipping the closest one...\n\t",
 			closest_departure = seconds_to_departure_list[1]
 		else:
 			closest_departure = seconds_to_departure_list[0]
